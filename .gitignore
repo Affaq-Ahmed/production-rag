@@ -1,0 +1,18 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# corpus checkout (reproduced by scripts/fetch_corpus.sh)
+data/
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# os
+.DS_Store
