@@ -31,3 +31,28 @@ dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.4",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["pgvector.*", "frontmatter.*", "sentence_transformers.*"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
