@@ -3,13 +3,13 @@
 English Kubernetes documentation, sections `concepts`, `tasks`, `tutorials`, `setup`.
 
 - Source: https://github.com/kubernetes/website
-- Commit: `<paste the hash>`
-- Fetched: 2026-11-10
-- Pages: <count>
+- Commit: `64652743292622fd66cfaa75d290f89a18d5beab`
+- Fetched: 2026-11-11
+- Pages: 477
 
 Reproduce exactly:
 
-    K8S_DOCS_COMMIT=<hash> ./scripts/fetch_corpus.sh
+    K8S_DOCS_COMMIT=64652743292622fd66cfaa75d290f89a18d5beab ./scripts/fetch_corpus.sh
 
 ## Attribution
 
