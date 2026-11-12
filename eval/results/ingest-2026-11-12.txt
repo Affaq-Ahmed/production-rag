@@ -1,0 +1,36 @@
+Ingestion run summaries — 2026-11-12
+Corpus: 64652743292622fd66cfaa75d290f89a18d5beab
+
+Commands used .venv/bin/python, equivalent to uv run python in this environment.
+Warnings about empty pages are summarized in the skipped count.
+
+$ python -m rag.ingest --strategy fixed --limit 10
+strategy:    fixed
+documents:   inserted 9  updated 0  unchanged 0  skipped 1
+chunks:      27
+tokens:      min 36  median 500  p95 500  max 500
+over limit:  0
+
+$ python -m rag.ingest --strategy structural --limit 10
+strategy:    structural
+documents:   inserted 0  updated 9  unchanged 0  skipped 1
+chunks:      77
+tokens:      min 9  median 105  p95 393  max 475
+over limit:  0
+
+$ python -m rag.ingest --strategy fixed
+strategy:    fixed
+documents:   inserted 368  updated 0  unchanged 78  skipped 31
+chunks:      2,272
+tokens:      min 14  median 500  p95 500  max 500
+over limit:  0
+
+$ python -m rag.ingest --strategy structural
+strategy:    structural
+documents:   inserted 0  updated 437  unchanged 9  skipped 31
+chunks:      4,773
+tokens:      min 1  median 146  p95 480  max 500
+over limit:  0
+
+--rebuild was not run. Both strategies are now populated; rebuilding would delete
+and recreate the selected strategy's chunks, including any existing embeddings.
