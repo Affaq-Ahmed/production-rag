@@ -2,15 +2,13 @@
 
 from pathlib import Path
 
-import psycopg
-
-from rag.config import get_settings
+from rag.db import connect
 
 MIGRATIONS = Path(__file__).resolve().parent.parent / "migrations"
 
 
 def main() -> None:
-    with psycopg.connect(str(get_settings().database_url)) as conn:
+    with connect() as conn:
         conn.execute(
             "create table if not exists schema_migrations ("
             " name text primary key, applied_at timestamptz not null default now())"
