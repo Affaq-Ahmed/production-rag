@@ -2,6 +2,59 @@
 
 import re
 
+# Hugo maps {{% heading "key" %}} to fixed English strings. Unknown keys fall back to the key.
+HEADINGS = {
+    "whatsnext": "What's next",
+    "prerequisites": "Before you begin",
+    "objectives": "Objectives",
+    "cleanup": "Clean up",
+    "synopsis": "Synopsis",
+    "options": "Options",
+    "seealso": "See also",
+}
+
+# "What's next" sections are navigation: lists of related page titles whose links are already
+# stripped. As chunks they match related queries without containing answers (distractors), so
+# they are dropped like other page navigation. See NOTES.md, "Dropping What's next sections".
+# Matches the shortcode form and the plain-Markdown heading a few pages write by hand.
+_DROPPED_SECTION = re.compile(
+    r"^ {0,3}(#{1,6})[ \t]+"
+    r"(?:{{%\s*heading\s+([\"'])whatsnext\2\s*%}}|what's next)[ \t]*$",
+    re.IGNORECASE,
+)
+_HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _closes(fence: str, line: str) -> bool:
+    return (
+        re.fullmatch(rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*", line.rstrip("\r\n"))
+        is not None
+    )
+
+
+def _drop_navigation(body: str) -> str:
+    """Remove each "What's next" section up to the next heading at its level or higher."""
+    kept: list[str] = []
+    fence: str | None = None
+    dropping: int | None = None
+    for line in body.splitlines(keepends=True):
+        if fence is not None:
+            if _closes(fence, line):
+                fence = None
+        elif dropped := _DROPPED_SECTION.match(line.rstrip("\r\n")):
+            dropping = len(dropped[1])
+            continue
+        else:
+            heading = _HEADING.match(line)
+            if dropping is not None and heading and len(heading[1]) <= dropping:
+                dropping = None
+            if marker := _FENCE.match(line):
+                fence = marker[1]
+        if dropping is None:
+            kept.append(line)
+    return "".join(kept)
+
 
 def _attribute(tag: str, name: str) -> str:
     match = re.search(rf"\b{re.escape(name)}\s*=\s*([\"'])(.*?)\1", tag, re.DOTALL)
@@ -22,11 +75,15 @@ def _clean_markup(text: str) -> str:
         text,
         flags=re.DOTALL,
     )
+    # The page already writes the "##"; the shortcode supplies only the heading text.
     text = re.sub(
         r"""{{%\s*heading\s+(["'])(.*?)\1\s*%}}""",
-        lambda m: "## " + m[2].title(),
+        lambda m: HEADINGS.get(m[2], m[2]),
         text,
     )
+    # Hugo heading IDs ("## Pod phase {#pod-phase}") would otherwise leak into heading paths.
+    # Only heading lines: fenced code never reaches this function, and prose may mention {#id}.
+    text = re.sub(r"^(#{1,6} .*?)[ \t]*\{#[^}\n]*\}[ \t]*$", r"\1", text, flags=re.MULTILINE)
     text = re.sub(
         r"{{<\s*feature-state\b.*?>}}",
         lambda m: (
@@ -61,7 +118,7 @@ def clean(body: str) -> str:
     parts: list[str] = []
     prose: list[str] = []
     fence: str | None = None
-    for line in body.splitlines(keepends=True):
+    for line in _drop_navigation(body).splitlines(keepends=True):
         marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
         if fence is None and marker:
             parts.append(_clean_markup("".join(prose)))
