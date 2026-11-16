@@ -1,0 +1,71 @@
+{
+  "model": "text-embedding-3-small",
+  "price_per_mtok": 0.02,
+  "price_checked": "2026-11-12",
+  "chunks": 14443,
+  "total_tokens": 4518103,
+  "cost_usd": 0.090362,
+  "elapsed_s": 1000.5,
+  "runs": [
+    {
+      "date": "2026-11-12",
+      "strategy": "structural",
+      "limit": 20,
+      "chunks": 20,
+      "batches": 1,
+      "total_tokens": 1986,
+      "cost_usd": 4e-05,
+      "elapsed_s": 14.0
+    },
+    {
+      "date": "2026-11-12",
+      "strategy": "fixed",
+      "limit": null,
+      "chunks": 2272,
+      "batches": 23,
+      "total_tokens": 1046373,
+      "cost_usd": 0.020927,
+      "elapsed_s": 221.8
+    },
+    {
+      "date": "2026-11-12",
+      "strategy": "structural",
+      "limit": null,
+      "chunks": 4753,
+      "batches": 48,
+      "total_tokens": 983271,
+      "cost_usd": 0.019665,
+      "elapsed_s": 487.6
+    },
+    {
+      "date": "2026-11-13",
+      "strategy": "fixed",
+      "limit": null,
+      "chunks": 1309,
+      "batches": 14,
+      "total_tokens": 624201,
+      "cost_usd": 0.012484,
+      "elapsed_s": 70.1
+    },
+    {
+      "date": "2026-11-16",
+      "strategy": "fixed",
+      "limit": null,
+      "chunks": 1952,
+      "batches": 20,
+      "total_tokens": 906554,
+      "cost_usd": 0.018131,
+      "elapsed_s": 64.2
+    },
+    {
+      "date": "2026-11-16",
+      "strategy": "structural",
+      "limit": null,
+      "chunks": 4137,
+      "batches": 42,
+      "total_tokens": 955718,
+      "cost_usd": 0.019114,
+      "elapsed_s": 142.8
+    }
+  ]
+}
