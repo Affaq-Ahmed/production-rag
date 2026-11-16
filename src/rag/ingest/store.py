@@ -33,14 +33,19 @@ def store(
         existing = cursor.fetchone()
         result: Literal["inserted", "updated", "unchanged"]
         if existing is not None:
-            document_id, old_hash = existing
-            if old_hash == content_hash:
-                cursor.execute(
-                    "select 1 from chunks where document_id = %s and strategy = %s limit 1",
-                    (document_id, strategy),
-                )
-                if cursor.fetchone() is not None:
-                    return "unchanged"
+            document_id = existing[0]
+            # The document hash is shared by both strategies, so it can't say whether *this*
+            # strategy's chunks are current. Each chunk records the hash it was built from.
+            cursor.execute(
+                "select count(*), count(*) filter (where source_hash = %s) "
+                "from chunks where document_id = %s and strategy = %s",
+                (content_hash, document_id, strategy),
+            )
+            counts = cursor.fetchone()
+            assert counts is not None
+            total, current = counts
+            if total > 0 and current == total:
+                return "unchanged"
             cursor.execute(
                 "update documents set source_url = %s, title = %s, content_type = %s, "
                 "content_hash = %s, corpus_commit = %s, ingested_at = now() where id = %s",
@@ -78,10 +83,18 @@ def store(
             result = "inserted"
         cursor.executemany(
             "insert into chunks "
-            "(document_id, strategy, ord, heading_path, text, token_count) "
-            "values (%s, %s, %s, %s, %s, %s)",
+            "(document_id, strategy, ord, heading_path, text, token_count, source_hash) "
+            "values (%s, %s, %s, %s, %s, %s, %s)",
             [
-                (document_id, c.strategy, c.ord, c.heading_path, c.text, c.token_count)
+                (
+                    document_id,
+                    c.strategy,
+                    c.ord,
+                    c.heading_path,
+                    c.text,
+                    c.token_count,
+                    content_hash,
+                )
                 for c in chunks
             ],
         )
