@@ -9,9 +9,8 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
-import psycopg
-
 from rag.config import get_settings
+from rag.db import connect
 from rag.ingest.chunk import MAX_TOKENS, chunk_fixed, chunk_structural
 from rag.ingest.clean import clean
 from rag.ingest.load import load
@@ -68,7 +67,7 @@ def main() -> None:
         files = files[: args.limit]
     counts: Counter[str] = Counter()
     paths: list[str] = []
-    with psycopg.connect(str(settings.database_url), autocommit=True) as conn:
+    with connect(autocommit=True) as conn:
         if args.rebuild:
             with conn.transaction():
                 conn.execute("delete from chunks where strategy = %s", (args.strategy,))
