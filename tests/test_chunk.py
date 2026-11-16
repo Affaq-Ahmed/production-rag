@@ -2,7 +2,7 @@ from itertools import pairwise
 
 import tiktoken
 
-from rag.ingest.chunk import MAX_TOKENS, OVERLAP, chunk_fixed, chunk_structural
+from rag.ingest.chunk import MAX_TOKENS, MIN_TOKENS, OVERLAP, chunk_fixed, chunk_structural
 from rag.ingest.models import Section
 
 ENCODING = tiktoken.get_encoding("cl100k_base")
@@ -73,14 +73,71 @@ def test_structural_merges_tiny_sibling_forward() -> None:
     assert "word" in chunks[0].text
 
 
-def test_structural_different_parent_is_not_merged() -> None:
+def test_tiny_sections_under_different_parents_merge_backward_under_common_ancestor() -> None:
     chunks = chunk_structural(
         [
             Section(("Title", "A", "One"), "Tiny."),
             Section(("Title", "B", "Two"), "Other."),
         ]
     )
-    assert len(chunks) == 2
+    assert [(c.heading_path, c.text) for c in chunks] == [("Title", "Tiny.\n\nOther.")]
+
+
+def test_parent_intro_merges_into_its_child() -> None:
+    chunks = chunk_structural(
+        [
+            Section(("T", "Probes"), "Probes check containers."),
+            Section(("T", "Probes", "Readiness"), " word" * 70),
+        ]
+    )
+    assert len(chunks) == 1
+    assert chunks[0].heading_path == "T \u203a Probes \u203a Readiness"
+    assert chunks[0].text.startswith("Probes check containers.")
+
+
+def test_last_tiny_section_merges_backward_under_common_ancestor() -> None:
+    chunks = chunk_structural(
+        [
+            Section(("T", "Troubleshooting", "Logs"), " word" * 100),
+            Section(("T", "Clean up"), "Delete the pod."),
+        ]
+    )
+    assert len(chunks) == 1
+    assert chunks[0].heading_path == "T"
+    assert chunks[0].text.endswith("Delete the pod.")
+
+
+def test_last_child_before_outline_rises_merges_backward() -> None:
+    chunks = chunk_structural(
+        [
+            Section(("T", "A"), " alpha" * 70),
+            Section(("T", "A", "A1"), " beta" * 70),
+            Section(("T", "A", "A2"), "Tiny last child."),
+            Section(("T", "B"), " gamma" * 70),
+        ]
+    )
+    assert [c.heading_path for c in chunks] == ["T \u203a A", "T \u203a A", "T \u203a B"]
+    assert chunks[1].text.startswith(" beta") and chunks[1].text.endswith("Tiny last child.")
+    assert "Tiny last child." not in chunks[2].text
+
+
+def test_tiny_section_is_kept_when_backward_merge_would_exceed_limit() -> None:
+    chunks = chunk_structural(
+        [
+            # 498 tokens alone; 503 with the tiny section appended.
+            Section(("T", "A"), " word" * 498),
+            Section(("T", "B"), "Tiny tail text."),
+        ]
+    )
+    assert [c.heading_path for c in chunks] == ["T \u203a A", "T \u203a B"]
+    assert all(c.token_count <= MAX_TOKENS for c in chunks)
+
+
+def test_tail_of_oversized_section_is_left_alone() -> None:
+    text = "\n\n".join([" word" * 480, " word" * 20])
+    chunks = chunk_structural([Section(("T", "A"), text)])
+    assert [c.heading_path for c in chunks] == ["T \u203a A", "T \u203a A"]
+    assert chunks[1].token_count < MIN_TOKENS
 
 
 def test_structural_greedy_paragraphs() -> None:

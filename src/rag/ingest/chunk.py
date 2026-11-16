@@ -8,6 +8,8 @@ from rag.ingest.models import Chunk, Section
 
 MAX_TOKENS = 500
 OVERLAP = 50
+# Sections smaller than this are folded into a neighbour (structural strategy only).
+MIN_TOKENS = 50
 _ENCODING = tiktoken.get_encoding("cl100k_base")
 
 
@@ -92,25 +94,68 @@ def _section_chunks(text: str) -> list[str]:
     return chunks
 
 
-def chunk_structural(sections: list[Section]) -> list[Chunk]:
-    # Merge forward into a sibling; the destination supplies the heading path.
+def _absorbs_forward(tiny: tuple[str, ...], following: tuple[str, ...]) -> bool:
+    """A sibling, or the tiny section's own child/descendant, can take it in."""
+    sibling = tiny[:-1] == following[:-1]
+    descendant = len(following) > len(tiny) and following[: len(tiny)] == tiny
+    return sibling or descendant
+
+
+def _common_ancestor(left: tuple[str, ...], right: tuple[str, ...]) -> tuple[str, ...]:
+    shared: list[str] = []
+    for a, b in zip(left, right, strict=False):
+        if a != b:
+            break
+        shared.append(a)
+    return tuple(shared)
+
+
+def _merge_backward_or_keep(merged: list[Section], tiny: Section) -> None:
+    """Append into the previous section if it fits, labelled by the paths' common ancestor.
+
+    The previous section's own path would file the tiny text under a heading it doesn't
+    belong to, and the heading path feeds both the embedding and the tsv column.
+    """
+    if merged:
+        previous = merged[-1]
+        combined = previous.text + "\n\n" + tiny.text
+        if len(_encode(combined)) <= MAX_TOKENS:
+            path = _common_ancestor(previous.heading_path, tiny.heading_path)
+            merged[-1] = Section(path, combined)
+            return
+    merged.append(tiny)
+
+
+def _merge_tiny(sections: list[Section]) -> list[Section]:
+    """Fold sections under MIN_TOKENS into a neighbour.
+
+    1. Forward into the next section if it is a sibling or the tiny section's own child,
+       keeping the next section's path (a child's path already includes the parent).
+    2. Otherwise backward into the previous section if the result fits in MAX_TOKENS.
+    3. Otherwise keep it. Small tails of oversized sections are split later and left alone.
+    """
     merged: list[Section] = []
     pending: Section | None = None
     for section in sections:
         if not section.text.strip():
             continue
         if pending is not None:
-            if (
-                len(_encode(pending.text)) < OVERLAP
-                and pending.heading_path[:-1] == section.heading_path[:-1]
-            ):
+            if _absorbs_forward(pending.heading_path, section.heading_path):
                 section = Section(section.heading_path, pending.text + "\n\n" + section.text)
             else:
-                merged.append(pending)
-        pending = section
+                _merge_backward_or_keep(merged, pending)
+            pending = None
+        if len(_encode(section.text)) < MIN_TOKENS:
+            pending = section
+        else:
+            merged.append(section)
     if pending is not None:
-        merged.append(pending)
+        _merge_backward_or_keep(merged, pending)
+    return merged
 
+
+def chunk_structural(sections: list[Section]) -> list[Chunk]:
+    merged = _merge_tiny(sections)
     chunks: list[Chunk] = []
     for section in merged:
         for text in _section_chunks(section.text):
