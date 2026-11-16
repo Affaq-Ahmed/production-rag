@@ -99,7 +99,8 @@ data/              # corpus checkout — git-ignored, never commit
   as a literal with `psycopg.sql.Literal` (it's a fixed two-value set, so this is safe). A `%s`
   parameter can stop Postgres from using the partial index.
 - Use the Supabase **session pooler** (port 5432), never the transaction pooler (6543).
-- Call `register_vector(conn)` after connecting, and pass embeddings as `numpy` arrays.
+- Call `register_vector(conn)` after connecting, and pass embeddings as `pgvector.Vector(values)`.
+  A plain Python list is sent as a Postgres array, not a vector. numpy is not a dependency.
 
 ## 8. Domain gotchas — read before touching ingestion or retrieval
 
@@ -125,6 +126,9 @@ data/              # corpus checkout — git-ignored, never commit
   that skips when `data/k8s-docs` is missing.
 - **The suite must pass without API keys.** Tests construct `Settings(_env_file=None)` with values
   set through `monkeypatch`.
+- **Behaviour that protects data is tested in the default suite.** Use a fake connection that
+  records `execute`/`executemany` calls rather than relying on a database test that skips without
+  `TEST_DATABASE_URL`. Database-backed tests are extra integration checks, never the only coverage.
 - Write a test for each bug before fixing it.
 - Test chunk overlap on **tokens**, not decoded strings.
 - Name tests after the behaviour they check: `test_tooltip_mid_sentence_keeps_word`.
