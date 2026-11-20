@@ -444,7 +444,7 @@ containers › Container restarts` first under both query forms, now with clean 
 ## Step 5: question set v1 (frozen 2026-11-20)
 
 `eval/questions.jsonl` has 20 questions: 7 identifier, 7 paraphrase and 6 multi. They carry 27 path
-labels across 24 documents. It is frozen as the annotated tag `questions-v1` on commit `4a95f4f`.
+labels across 24 documents. It is frozen as the annotated tag `questions-v1` on commit `c87c861`.
 Every Step 9 result records the tag it ran against. Changing a label after this means a
 `questions-v2` tag, a rerun of all configurations, and a line in the README.
 
