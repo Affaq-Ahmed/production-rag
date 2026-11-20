@@ -43,7 +43,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests"]
+files = ["src", "tests", "eval"]
 
 [[tool.mypy.overrides]]
 module = ["pgvector.*", "frontmatter.*", "sentence_transformers.*"]
@@ -56,3 +56,5 @@ warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# eval/ is scripts, not a package; this lets tests import eval/validate_questions.py.
+pythonpath = ["eval"]
