@@ -440,3 +440,57 @@ through ~10k incremental deletes and inserts.
 
 Smoke rerun: "my pod keeps restarting" → `Pod Lifecycle › How Pods handle problems with
 containers › Container restarts` first under both query forms, now with clean heading paths.
+
+## Step 5: question set v1 (frozen 2026-11-20)
+
+`eval/questions.jsonl` has 20 questions: 7 identifier, 7 paraphrase and 6 multi. They carry 27 path
+labels across 24 documents. It is frozen as the annotated tag `questions-v1` on commit `4a95f4f`.
+Every Step 9 result records the tag it ran against. Changing a label after this means a
+`questions-v2` tag, a rerun of all configurations, and a line in the README.
+
+- **Provenance.** All 20 `notes` fields record "Drafted with Claude."
+- **Labels are document paths, not chunk IDs,** so re-chunking doesn't break them. Three pages
+  are labelled in two questions each:
+  - `service.md` in q03 and q20
+  - `deployment.md` in q04 and q16
+  - `job.md` in q07 and q18
+- **Four questions are marked hard in `notes`.** Look at these first in Step 9:
+  - q01: the field appears on about 8 pages.
+  - q03: one number deep in a long page.
+  - q10: the answer is one bullet near the end.
+  - q17: Docker appears on about 12 unrelated pages.
+- **Two label fixes were made before freezing.** No results existed yet.
+  1. q01 was first labelled `concepts/workloads/pods/pod-termination.md`, which doesn't exist in
+     the pinned corpus. Termination is a section of `pod-lifecycle.md`.
+  2. In the ConfigMap/Secret question, the evidence for `secret.md` was ConfigMap's sentence,
+     which isn't on that page.
+
+### Validator: `eval/validate_questions.py`
+
+Run it with `uv run python eval/validate_questions.py`. On v1 it reports OK and all evidence
+found. Its checks:
+
+- every line parses into the Pydantic model, with extra fields forbidden
+- IDs are unique
+- the type mix is 7 / 7 / 6
+- every labelled page exists and `load()` accepts it
+- evidence keys equal `relevant_paths`
+- each phrase is in its page's cleaned text
+- multi questions have at least 2 distinct paths
+- no two questions are the same
+
+Decisions and findings:
+
+- **Evidence is matched in `clean()` output.** Runs of whitespace are ignored because Markdown
+  hard-wraps prose; otherwise matching is exact and case-sensitive. On v1 none of the 27 phrases
+  needed the whitespace rule, and none exist only in raw markup. So the cleaner removes none of
+  the labelled evidence.
+- **A missing phrase gets one of two messages:** in the raw page but not after `clean()` (Hugo
+  markup, or the cleaner eating text), or not on the page at all (wrong label).
+- **Pages that `load()` skips (no title) are flagged.** Ingestion never stores them, so retrieval
+  can never return them.
+- **The tests found a bug.** An absolute path like `/etc/hosts` passed the "file exists" check,
+  because `corpus_dir / "/etc/hosts"` evaluates to `/etc/hosts`. The fix is one guarded helper.
+- **`pyproject.toml` changes.** `eval` is added to mypy `files`, so eval scripts (including
+  Step 9's `run.py`) get strict checking. pytest gets `pythonpath = ["eval"]` so tests can import
+  the script.
