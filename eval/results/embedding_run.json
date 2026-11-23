@@ -2,10 +2,10 @@
   "model": "text-embedding-3-small",
   "price_per_mtok": 0.02,
   "price_checked": "2026-11-12",
-  "chunks": 14443,
-  "total_tokens": 4518103,
-  "cost_usd": 0.090362,
-  "elapsed_s": 1000.5,
+  "chunks": 20807,
+  "total_tokens": 6497558,
+  "cost_usd": 0.129951,
+  "elapsed_s": 1074.4,
   "runs": [
     {
       "date": "2026-11-12",
@@ -66,6 +66,16 @@
       "total_tokens": 955718,
       "cost_usd": 0.019114,
       "elapsed_s": 142.8
+    },
+    {
+      "date": "2026-11-21",
+      "strategy": null,
+      "limit": null,
+      "chunks": 6364,
+      "batches": 64,
+      "total_tokens": 1979455,
+      "cost_usd": 0.039589,
+      "elapsed_s": 73.9
     }
   ]
 }

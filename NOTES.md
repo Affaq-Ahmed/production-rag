@@ -494,3 +494,150 @@ Decisions and findings:
 - **`pyproject.toml` changes.** `eval` is added to mypy `files`, so eval scripts (including
   Step 9's `run.py`) get strict checking. pytest gets `pythonpath = ["eval"]` so tests can import
   the script.
+
+## Step 6.7: the vector query uses the partial HNSW indexes (2026-11-20)
+
+`explain` + `build_vector_sql(strategy)`, run with q01's cached vector and `k = 10` (Postgres
+17.11, pgvector 0.8.2). Both strategies get an `Index Scan` on their own partial index; neither
+shows a `Seq Scan` or a `Sort`. So the four §6.4 rules hold: literal strategy, `<=>`, order by
+the distance ascending, and a limit. The 1,536-float literal is shortened to `[…]` here.
+
+Fixed:
+
+```
+Limit  (cost=508.24..524.78 rows=10 width=991)
+  ->  Nested Loop  (cost=508.24..4192.25 rows=2227 width=991)
+        ->  Index Scan using chunks_embedding_fixed_hnsw on chunks c  (cost=507.95..3996.77 rows=2227 width=959)
+              Order By: (embedding <=> '[…]'::vector)
+        ->  Memoize  (cost=0.28..0.31 rows=1 width=58)
+              Cache Key: c.document_id
+              Cache Mode: logical
+              ->  Index Scan using documents_pkey on documents d  (cost=0.27..0.30 rows=1 width=58)
+                    Index Cond: (id = c.document_id)
+```
+
+Structural:
+
+```
+Limit  (cost=637.40..653.67 rows=10 width=991)
+  ->  Nested Loop  (cost=637.40..7368.23 rows=4137 width=991)
+        ->  Index Scan using chunks_embedding_structural_hnsw on chunks c  (cost=637.12..7122.30 rows=4137 width=959)
+              Order By: (embedding <=> '[…]'::vector)
+        ->  Memoize  (cost=0.28..0.31 rows=1 width=58)
+              Cache Key: c.document_id
+              Cache Mode: logical
+              ->  Index Scan using documents_pkey on documents d  (cost=0.27..0.30 rows=1 width=58)
+                    Index Cond: (id = c.document_id)
+```
+
+- **The `documents` join doesn't get in the way.** The HNSW scan is the outer side of a nested
+  loop, so the limit stops it after 10 rows. Each path comes from a memoized primary-key lookup.
+- **The generic plan keeps the index too.** psycopg prepares a statement after 5 executions, and
+  the eval runs 20 per configuration, so Postgres may switch to a generic plan with `$1` and `$2`
+  in place of values. Checked with `prepare` (with `$1`/`$2` for `%(q)s`/`%(k)s`),
+  `plan_cache_mode = force_generic_plan` and `explain execute`. For both strategies the same
+  `Index Scan using chunks_embedding_<strategy>_hnsw` appears with `Order By: (embedding <=> $1)`.
+  The only difference is the `Limit` estimate (223 and 414 rows, 10% of the table, because `$2`
+  is unknown). This is the fix for the Step 4.7 trap: there, `strategy = $1` made the generic
+  plan a `Seq Scan`; with the strategy as a literal, only `q` and `k` are parameters.
+- **`plan_cache_mode` does nothing to a plain `explain` with bound parameters.** psycopg's
+  `explain … %(q)s` always shows a custom plan with the values inlined, whatever
+  `plan_cache_mode` says. Only `prepare` + `explain execute` shows the generic plan. And
+  `explain execute` rejects a bound parameter ("there is no parameter $1"), so its arguments go
+  in as literals (`psycopg.ClientCursor`).
+
+## Local Postgres for development and evaluation (2026-11-21)
+
+- 2026-11-21: Supabase session pooler degraded over several hours. A second connection waited
+  12.4 s behind a running `pg_sleep(12)`, consistent with an exhausted pool (small pool size,
+  or sessions leaked by earlier hung runs). Unconfirmed. Connects slowed to 6–12 s. Moved
+  development and evaluation to a local pgvector container; Supabase remains the deployment
+  target.
+- **A timer signal can't reliably interrupt psycopg's wait.** `setitimer`'s SIGALRM can be
+  delivered to another thread, and psycopg's C wait loop never runs the Python handler. A
+  watchdog thread that gives up on a stuck call works, but the abandoned connection stays open.
+  That's why the peek script no longer has one.
+
+**Rebuild:**
+- **The container.** `pgvector/pgvector:pg17` (PostgreSQL 17.12, pgvector 0.8.7; Supabase has
+  17.11 and 0.8.2), on port 5433 with volume `prag-data`. `.env` points at it, with the
+  Supabase URL kept as a comment.
+- **Ingest.** `migrate` → `ingest --strategy fixed` → `ingest --strategy structural` gave 446
+  documents, 2,227 fixed and 4,137 structural chunks, identical to the Supabase state in
+  "Step 4 final state". About 2 s per strategy.
+- **Embedding.** `rag.embed` embedded 6,364 chunks: 1,979,455 tokens, $0.039589, 74 s. It
+  appended a run to `eval/results/embedding_run.json`. The query cache carried over unchanged.
+
+**A planner difference, found and fixed before any peek numbers.**
+- **The symptom.** `check_recall.py` reported that the indexed query didn't use the HNSW
+  index. With stock `random_page_cost = 4`, the planner rates an HNSW scan above an exact sort
+  (fixed: 1,802 vs 1,154; structural roughly a tie). So it reads every chunk of the strategy
+  through `chunks_strategy_idx` and sorts. That's exact search, which ignores `ef_search`.
+- **The cause.** Supabase runs `random_page_cost = 1.1` (checked with `show`), and that's why
+  the Step 6.7 plans used HNSW.
+- **The fix.** `alter database postgres set random_page_cost = 1.1`, so the local planner
+  matches the deployment target. This isn't tuning: exact search would score higher, not
+  lower. After it, `check_recall.py` gives fixed 1.000 and structural 1.000 (20/20 each,
+  ef_search 40), both through their HNSW index, and the k = 50 `ef_search` test passes.
+- **Not in a migration.** The setting lives in the `prag-data` volume, so a fresh container
+  needs it again.
+- **Left alone.** `effective_cache_size` also differs (Supabase 384MB, local 4GB). It doesn't
+  change these plans.
+
+## Step 6.9: first look at vector search (2026-11-21)
+
+`scripts/peek_vector.py` ran with k = 10 on the local database, using cached query vectors (no
+API calls). All 40 searches took 0.6 s. This isn't the evaluation, and nothing was changed
+because of it.
+
+| | fixed | structural |
+|---|---|---|
+| hit@1 | 10/20 | 9/20 |
+| hit@5 | 15/20 | 16/20 |
+| hit@10 | 17/20 | 18/20 |
+| MRR | 0.62 | 0.60 |
+
+| By type: hit@5, then MRR (fixed / structural) | hit@5 | MRR |
+|---|---|---|
+| identifier (7) | 7/7 / 7/7 | 0.93 / 0.82 |
+| paraphrase (7) | 3/7 / 4/7 | 0.39 / 0.22 |
+| multi (6) | 5/6 / 5/6 | 0.53 / 0.77 |
+
+**The expected pattern didn't appear.** Identifier questions are the *strongest* group: every
+one finds its page in the top 5 under both strategies. Paraphrase questions are the weakest.
+Step 7 still tests keyword search, but on this set vector search loses ground on paraphrase
+and multi questions, not identifier ones.
+
+**Misses.** One line per question that missed a labelled page in the top 10. The ranks come
+from a k = 500 diagnostic search.
+- **q09** (paraphrase; both strategies miss): "freezes while still running … restart it
+  automatically". The top 10 is `pod-lifecycle.md` "Container restarts" sections plus
+  `self-healing.md`, so "restart" dominates. `probes.md` describes the symptom as "a deadlock,
+  where an application is running, but unable to make progress" and never says "freeze". It's
+  first at rank 81 (fixed) and 39 (structural).
+- **q10** (paraphrase; both miss): "reserve a group of machines … one team's workloads". The
+  wording pulls in `reserve-compute-resources.md` ("Reserve Compute Resources for System
+  Daemons") and workload/PodGroup scheduling pages. The answer is the "Dedicated Nodes" use case
+  in `taint-and-toleration.md` ("dedicate a set of nodes for exclusive use by a particular set
+  of users"). It's first at rank 59 and 112.
+- **q18** (multi; fixed gets neither page, structural only `job.md` at 8): "run every night and
+  be retried".
+  - Fixed's first hit is the CronJob *task* page, `tasks/job/automated-tasks-with-cron-jobs.md`,
+    and "retried" pulls in `pod-failure-policy.md`. The labelled concept pages are at 49
+    (`cron-jobs.md`) and 23 (`job.md`).
+  - Structural has `cron-jobs.md` only at 131.
+  - The task page also answers the question but isn't labelled. That's a labelling question for
+    a possible v2; v1 stays as it is.
+- **q16** (multi; fixed finds half): "difference between a Deployment and a StatefulSet".
+  StatefulSet chunks (`statefulset.md` and its tutorial) fill 9 of fixed's 10 slots;
+  `deployment.md` is first at 17. Structural has it at 3.
+- **q19** (multi; both find half): "low on memory, which pods get evicted first". The rank-1
+  page, `node-pressure-eviction.md`, explains the eviction order itself, by requests and by
+  `BestEffort`/`Burstable`. Its chunks and `manage-resources-containers.md` fill the top 10, and
+  `pod-qos.md` is first at 26 (fixed) and 88 (structural).
+
+**Pattern: two kinds of miss.**
+- **Wording.** The question's words match a neighbouring page better than the answering page
+  (q09, q10, q18).
+- **Crowding.** One strong page takes most of the 10 slots (q16, q19). This is the 6.8 rule
+  (k counts chunks, not pages) working as intended.
