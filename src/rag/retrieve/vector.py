@@ -1,19 +1,43 @@
-"""Vector search: cached query embeddings and the embedding-model check."""
+"""Vector search: cached query embeddings, the embedding-model check, the SQL and the search."""
 
 import json
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import psycopg
+from pgvector import Vector
+from psycopg import sql
 
 from rag.embed import EmbeddingClient, embed_batch, query_input
 from rag.ingest.models import Strategy
+from rag.retrieve.models import Hit
 
 QUERY_CACHE_PATH = Path(__file__).resolve().parents[3] / "eval" / "cache" / "query_embeddings.json"
+# HNSW returns at most hnsw.ef_search rows whatever the limit. 40 is pgvector's default, and
+# 1000 its maximum, so max(40, 2k) works up to k = 500.
+EF_SEARCH_DEFAULT = 40
+EF_SEARCH_MAX = 1000
+MAX_K = EF_SEARCH_MAX // 2
 
 
 class EmbeddingModelMismatchError(RuntimeError):
     """Query and chunk vectors would come from different models, or some chunks have none."""
+
+
+@dataclass(frozen=True)
+class VectorSearch:
+    """The hits, and the two halves of the time taken, in seconds.
+
+    Timed apart because they behave differently: embed_s is near zero on a cache hit and an API
+    round trip on a miss, while db_s is what the reranker will later be compared against.
+    """
+
+    hits: list[Hit]
+    embed_s: float
+    db_s: float
 
 
 def query_cache_key(model: str, query: str) -> str:
@@ -86,3 +110,104 @@ def check_embedding_model(conn: psycopg.Connection[Any], strategy: Strategy, mod
             f"{strategy} chunks have embedding_model {found}, queries use {model!r}"
             + (" (None: some chunks are not embedded)" if None in found else "")
         )
+
+
+def build_vector_sql(strategy: Strategy) -> sql.Composed:
+    """Nearest chunks of one strategy by cosine distance. Parameters: %(q)s Vector, %(k)s int.
+
+    Each rule keeps the strategy's partial HNSW index in use; breaking one makes Postgres scan
+    and sort every row instead, with no error:
+    - the strategy is a literal, so the planner can match the index's `where strategy = ...`
+      (safe as a literal because it is checked against the two-value Strategy type);
+    - `<=>` only: the index is vector_cosine_ops, which serves neither `<->` nor `<#>`;
+    - order by the distance expression itself, ascending;
+    - always a limit: HNSW answers "nearest k", nothing else.
+    """
+    _check_strategy(strategy)
+    return sql.SQL(
+        "select c.id, d.path, c.heading_path, c.text,\n"
+        "       c.embedding <=> %(q)s as distance\n"
+        "from chunks c\n"
+        "join documents d on d.id = c.document_id\n"
+        "where c.strategy = {strategy}\n"
+        "order by c.embedding <=> %(q)s\n"
+        "limit %(k)s"
+    ).format(strategy=sql.Literal(strategy))
+
+
+def ef_search_for(k: int) -> int:
+    """Candidate list size for a top-k search: never below the default, 2k for headroom."""
+    return max(EF_SEARCH_DEFAULT, 2 * k)
+
+
+def nearest_chunks(
+    conn: psycopg.Connection[Any], query_vector: list[float], strategy: Strategy, k: int
+) -> list[Hit]:
+    """The database half: the k nearest chunks of one strategy, ranked from 1.
+
+    Needs register_vector(conn) once after connecting, and an idle connection (autocommit, or
+    no open transaction).
+    """
+    _check_search(conn, strategy, k)
+    with conn.transaction():
+        conn.execute(sql.SQL("set local hnsw.ef_search = {}").format(sql.Literal(ef_search_for(k))))
+        rows = conn.execute(
+            build_vector_sql(strategy), {"q": Vector(query_vector), "k": k}
+        ).fetchall()
+    return [
+        Hit(
+            chunk_id=chunk_id,
+            path=path,
+            heading_path=heading_path,
+            text=text,
+            score=distance,
+            rank=rank,
+            source="vector",
+        )
+        for rank, (chunk_id, path, heading_path, text, distance) in enumerate(rows, start=1)
+    ]
+
+
+def search_vector(
+    conn: psycopg.Connection[Any],
+    client: EmbeddingClient,
+    query: str,
+    strategy: Strategy,
+    k: int = 10,
+    *,
+    cache: QueryEmbeddingCache,
+    model: str,
+    dims: int,
+    clock: Callable[[], float] = time.perf_counter,
+) -> VectorSearch:
+    """Embed the query (cache first, API on a miss), then fetch its k nearest chunks.
+
+    Call check_embedding_model(conn, strategy, model) once per session before searching; it is
+    not repeated here, so it is never inside the timings. Pass one cache for the whole run:
+    loading the file is setup, not embedding time.
+    """
+    # Checked before embedding, so a bad argument never costs an API call.
+    _check_search(conn, strategy, k)
+    started = clock()
+    vector = embed_query(client, cache, model, dims, query)
+    embedded = clock()
+    hits = nearest_chunks(conn, vector, strategy, k)
+    finished = clock()
+    return VectorSearch(hits, embed_s=embedded - started, db_s=finished - embedded)
+
+
+def _check_strategy(strategy: Strategy) -> None:
+    # mypy enforces Strategy for typed callers; this catches a CLI string or a typo at runtime,
+    # which would otherwise match no index and silently return zero rows.
+    if strategy not in get_args(Strategy):
+        raise ValueError(f"unknown strategy {strategy!r}")
+
+
+def _check_search(conn: psycopg.Connection[Any], strategy: Strategy, k: int) -> None:
+    _check_strategy(strategy)
+    if not 1 <= k <= MAX_K:
+        raise ValueError(f"k must be between 1 and {MAX_K}, got {k}")
+    # Inside an open transaction, conn.transaction() is only a savepoint, and `set local`
+    # outlives a released savepoint (NOTES.md, Step 4.8): ef_search would leak into later work.
+    if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+        raise RuntimeError("vector search needs an idle connection with no open transaction")
