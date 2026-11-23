@@ -32,6 +32,10 @@ _CONNECT_KWARGS: dict[str, Any] = {
 _SESSION_SETTINGS = (
     "set statement_timeout = '60s'",
     "set idle_in_transaction_session_timeout = '120s'",
+    # Stock Postgres prices random reads for spinning disks (4.0), and at that price the planner
+    # sorts every chunk exactly instead of using the partial HNSW index. 1.1 is Supabase's value:
+    # set per session, it travels with the code to any database and needs no ALTER DATABASE.
+    "set random_page_cost = 1.1",
 )
 
 

@@ -100,3 +100,14 @@ def test_connect_sets_timeouts_on_the_session(monkeypatch: pytest.MonkeyPatch) -
     assert "set statement_timeout = '60s'" in fake.executed
     assert "set idle_in_transaction_session_timeout = '120s'" in fake.executed
     assert fake.committed
+
+
+def test_connect_sets_random_page_cost_so_stock_postgres_uses_hnsw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeConnection()
+    monkeypatch.setattr("rag.db.psycopg.connect", lambda url, **kwargs: fake)
+    db.connect("postgresql://x")
+    # At the stock 4.0 the planner chose an exact sort over the partial HNSW index.
+    assert "set random_page_cost = 1.1" in fake.executed
+    assert fake.committed

@@ -641,3 +641,14 @@ from a k = 500 diagnostic search.
   (q09, q10, q18).
 - **Crowding.** One strong page takes most of the 10 slots (q16, q19). This is the 6.8 rule
   (k counts chunks, not pages) working as intended.
+
+## Step 7.0: loose ends from Step 6 (2026-11-23)
+
+**The planner setting moved into the code.** `rag.db.connect()` now runs
+`set random_page_cost = 1.1` next to the timeouts. It works on a fresh container and on
+Supabase, and needs no `ALTER DATABASE` privilege. A fake-connection test checks that the
+helper issues it.
+- The database-level setting from 2026-11-21 is reset: a plain `psql` session on the container
+  now shows the stock 4.
+- With only the `connect()` setting, `check_recall.py` still plans both strategies through
+  their HNSW index, and recall is fixed 1.000 and structural 1.000 (20/20 each, ef_search 40).
