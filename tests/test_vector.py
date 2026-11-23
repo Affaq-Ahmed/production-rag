@@ -1,13 +1,14 @@
 """Vector search: query cache, model check, SQL, ef_search and timings, with fakes."""
 
 import json
-import os
+import random
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 import psycopg
 import pytest
@@ -33,6 +34,7 @@ from rag.retrieve.vector import (
 from tests.test_embed import DIMS, FakeClient, vector_for
 
 MODEL = "text-embedding-3-small"
+COLUMN_DIMS = 1536  # chunks.embedding is vector(1536), whatever DIMS the fakes use
 
 
 @pytest.fixture
@@ -347,38 +349,61 @@ def test_bad_search_is_refused_before_any_api_call_or_sql(
 
 
 @pytest.fixture
-def live_conn() -> Iterator[psycopg.Connection[Any]]:
-    url = os.environ.get("TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("Set TEST_DATABASE_URL to run database integration tests")
-    with psycopg.connect(url, autocommit=True, connect_timeout=10) as connection:
+def live_conn(integration_database_url: str) -> Iterator[psycopg.Connection[Any]]:
+    with psycopg.connect(integration_database_url, autocommit=True) as connection:
         register_vector(connection)
         yield connection
 
 
-def test_k_50_returns_50_rows_where_default_ef_search_returns_40(
-    live_conn: psycopg.Connection[Any],
-) -> None:
-    """Read-only: an existing fixed chunk's vector is the query."""
-    row = live_conn.execute(
-        "select embedding::text, (select count(*) from chunks"
-        " where strategy = 'fixed' and embedding is not null)"
-        " from chunks where strategy = 'fixed' and embedding is not null order by id limit 1"
-    ).fetchone()
-    if row is None or row[1] < 100:
-        pytest.skip("needs at least 100 embedded fixed chunks")
-    vector = [float(x) for x in row[0].strip("[]").split(",")]
+@pytest.fixture
+def seeded_vectors(live_conn: psycopg.Connection[Any]) -> Iterator[list[list[float]]]:
+    """100 committed fixed chunks with random vectors, deleted afterwards.
 
-    with live_conn.transaction():
-        # Force the index, which a small test table might skip; this is the trap without the fix.
-        live_conn.execute("set local enable_seqscan = off")
-        default = live_conn.execute(
-            build_vector_sql("fixed"), {"q": Vector(vector), "k": 50}
-        ).fetchall()
+    Committed rather than rolled back, because nearest_chunks refuses a connection with an open
+    transaction. 100 rows is enough to tell ef_search's 40 from k = 50.
+    """
+    rng = random.Random(0)
+    # Random in 8 dimensions, zero in the rest: 1,536 random dimensions make every pair nearly
+    # orthogonal, and HNSW's graph walk then stops short of ef_search rows (39 of 40 here).
+    vectors = [[rng.gauss(0, 1) for _ in range(8)] + [0.0] * (COLUMN_DIMS - 8) for _ in range(100)]
+    row = live_conn.execute(
+        "insert into documents (path, source_url, title, content_hash, corpus_commit) "
+        "values (%s, 'u', 'T', 'h', 'c') returning id",
+        (f"test/{uuid4()}.md",),
+    ).fetchone()
+    assert row is not None
+    try:
+        with live_conn.transaction(), live_conn.cursor() as cur:
+            cur.executemany(
+                "insert into chunks (document_id, strategy, ord, heading_path, text,"
+                " token_count, source_hash, embedding, embedding_model)"
+                " values (%s, 'fixed', %s, 'T', 'seed', 1, 'h', %s, 'm')",
+                [(row[0], ord_, Vector(vector)) for ord_, vector in enumerate(vectors)],
+            )
+        yield vectors
+    finally:
+        # Scoped to the seeded document; its chunks go with it (on delete cascade).
+        live_conn.execute("delete from documents where id = %s", (row[0],))
+
+
+def test_k_50_returns_50_rows_where_default_ef_search_returns_40(
+    live_conn: psycopg.Connection[Any], seeded_vectors: list[list[float]]
+) -> None:
+    vector = seeded_vectors[0]
+    # Leave the planner only the HNSW index. On 100 rows it would rather read and sort them
+    # all, which returns every row asked for and hides the trap this test is about.
+    live_conn.execute("set enable_seqscan = off")
+    live_conn.execute("set enable_sort = off")
+
+    default = live_conn.execute(
+        build_vector_sql("fixed"), {"q": Vector(vector), "k": 50}
+    ).fetchall()
     hits = nearest_chunks(live_conn, vector, "fixed", 50)
     after = live_conn.execute("select current_setting('hnsw.ef_search')").fetchone()
 
-    assert len(default) == EF_SEARCH_DEFAULT
+    # The trap: HNSW returns at most ef_search rows whatever the limit. An exact sort would
+    # return all 50, so this also proves the index was used.
+    assert len(default) <= EF_SEARCH_DEFAULT
     assert len(hits) == 50
     assert [hit.rank for hit in hits] == list(range(1, 51))
     assert after == (str(EF_SEARCH_DEFAULT),)

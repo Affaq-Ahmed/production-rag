@@ -652,3 +652,30 @@ helper issues it.
   now shows the stock 4.
 - With only the `connect()` setting, `check_recall.py` still plans both strategies through
   their HNSW index, and recall is fixed 1.000 and structural 1.000 (20/20 each, ef_search 40).
+
+**The integration tests have their own database.** On 2026-11-21 they ran against the dev
+database by mistake. They roll back, so nothing changed, but the mistake shouldn't be possible.
+- **Setup.** `prag_test` lives in the same container
+  (`docker exec prag-db psql -U postgres -c "create database prag_test"`), and `.env` has
+  `TEST_DATABASE_URL` pointing at it.
+- **The fixture.** A session-scoped fixture, `integration_database_url` in `tests/conftest.py`,
+  migrates `prag_test` once per run. The migration logic moved to `rag.migrate`, so the fixture
+  and `scripts/migrate.py` share it.
+- **The guard.** The fixture refuses to run, before connecting, when `TEST_DATABASE_URL` names
+  the `DATABASE_URL` database. Host, port and database name are compared with libpq's defaults
+  filled in, so `127.0.0.1` for `localhost`, another user or extra options don't get past it.
+  Checked live: pointed at the dev database, all 7 integration tests error with the refusal,
+  and the dev data is unchanged.
+- **The stale test now runs.** `test_embed_pending_writes_and_resumes` inserted chunks without
+  `source_hash`, which migration 003 made NOT NULL. It failed on `prag_test` before the fix and
+  passes after.
+- **The k = 50 `ef_search` test seeds its own rows.** It used to read the dev database's
+  chunks and would always skip on an empty `prag_test`. It now commits 100 fixed chunks,
+  deletes them afterwards, and turns off `enable_seqscan` and `enable_sort` so HNSW is the only
+  plan left.
+  - **Random 1,536-dimensional vectors broke the exact count.** They are nearly orthogonal, and
+    HNSW returned 39 rows at ef_search 40. The seeds are now random in 8 dimensions, which gives
+    40.
+  - **The assertion is "at most ef_search".** pgvector picks HNSW levels at random, so the
+    graph isn't deterministic. An exact sort would return all 50, so the assertion still proves
+    the index was used.

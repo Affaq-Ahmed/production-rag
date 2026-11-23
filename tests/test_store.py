@@ -1,7 +1,6 @@
 """store(): scripted-fake tests run by default; database tests need TEST_DATABASE_URL."""
 
 import hashlib
-import os
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
@@ -16,11 +15,8 @@ from rag.ingest.store import store
 
 
 @pytest.fixture
-def conn() -> Iterator[psycopg.Connection[Any]]:
-    url = os.environ.get("TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("Set TEST_DATABASE_URL to run database integration tests")
-    with psycopg.connect(url) as connection:
+def conn(integration_database_url: str) -> Iterator[psycopg.Connection[Any]]:
+    with psycopg.connect(integration_database_url) as connection:
         try:
             yield connection
         finally:

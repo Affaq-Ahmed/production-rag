@@ -5,7 +5,6 @@ extra integration check that needs TEST_DATABASE_URL.
 """
 
 import json
-import os
 import random
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, nullcontext
@@ -217,11 +216,8 @@ def test_merge_run_rejects_a_different_model() -> None:
 
 
 @pytest.fixture
-def conn() -> Iterator[psycopg.Connection[Any]]:
-    url = os.environ.get("TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("Set TEST_DATABASE_URL to run database integration tests")
-    with psycopg.connect(url) as connection:
+def conn(integration_database_url: str) -> Iterator[psycopg.Connection[Any]]:
+    with psycopg.connect(integration_database_url) as connection:
         register_vector(connection)
         try:
             yield connection
