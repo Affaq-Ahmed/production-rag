@@ -679,3 +679,38 @@ database by mistake. They roll back, so nothing changed, but the mistake shouldn
   - **The assertion is "at most ef_search".** pgvector picks HNSW levels at random, so the
     graph isn't deterministic. An exact sort would return all 50, so the assertion still proves
     the index was used.
+
+### Question set v2 (tag `questions-v2`)
+
+From here on, every result uses `questions-v2`. No configuration results existed yet, so there
+is nothing to rerun. Two changes from v1:
+
+1. **q02 was reworded after the v1 tag.** "My pod is stuck in ImagePullBackOff. What does that
+   status mean?" became "… What does that mean?". The label and evidence are unchanged.
+   - The edit went in with the 2026-11-20 docs commit (`2c4a5f7`), after `questions-v1` was
+     tagged, so the file and the tag disagreed until now.
+   - Reason: not written down when the edit was made.
+2. **q18 gains `tasks/job/automated-tasks-with-cron-jobs.md`.** The omission was found through
+   the Step 6.9 peek: the page was fixed's first hit for q18 but unlabelled.
+   - **Reading it confirmed it answers the scheduling half,** as `cron-jobs.md` does. It says it
+     "shows how to run automated tasks using Kubernetes CronJob object", and it walks through
+     the CronJob creating Jobs. It says nothing about retries; `job.md` covers that half, as
+     before.
+   - **This corrects a missing label.** The question text is unchanged.
+   - **Effect on q18.** Fixed goes from a miss to rank 1, and structural from rank 8 to rank 2.
+     recall@10 now counts three pages: fixed 0.33, structural 0.67. A run that finds both
+     concept pages but not the task page now scores 0.67 on q18, not 1.0.
+
+The validator reports OK on v2: all evidence found, 28 labels across 25 documents.
+
+**Peek rerun on v2** (all 20 query vectors from the cache; the cache file is unchanged). The
+Step 6.9 tables above used the v1 labels with q02 already reworded. Only q18 differs:
+
+| | fixed | structural |
+|---|---|---|
+| hit@1 | 11/20 | 9/20 |
+| hit@5 | 16/20 | 17/20 |
+| hit@10 | 18/20 | 18/20 |
+| MRR | 0.67 | 0.61 |
+
+Multi questions now reach hit@5 6/6 under both strategies, with MRR 0.69 / 0.83.

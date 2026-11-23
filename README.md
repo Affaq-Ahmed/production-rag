@@ -15,7 +15,7 @@ file in `eval/results/`.
 
 ## Test set
 
-The test set is `eval/questions.jsonl`, frozen as the git tag `questions-v1`. It has 20
+The test set is `eval/questions.jsonl`, frozen as the git tag `questions-v2`. It has 20
 questions of three types:
 
 | Type | Questions | What it tests |
@@ -24,8 +24,8 @@ questions of three types:
 | paraphrase | 7 | The question describes the problem without the page's own terms (for example, it avoids "disruption budget" or "liveness probe"). |
 | multi | 6 | The answer needs two or more pages. |
 
-- **Labels are document paths, not chunk IDs.** Re-chunking doesn't change them. The set has 27
-  labels across 24 documents.
+- **Labels are document paths, not chunk IDs.** Re-chunking doesn't change them. The set has 28
+  labels across 25 documents.
 - **Every label has an evidence phrase.** The validator checks that the phrase appears in that
   page's cleaned text, so each label is backed by text that actually reaches the index.
 - **Provenance.** Each question's `notes` field records that it was drafted with Claude.
@@ -45,3 +45,4 @@ change is listed here.
 | Version | Change |
 |---|---|
 | `questions-v1` | First version. |
+| `questions-v2` | q02 reworded (label unchanged). q18 gains `tasks/job/automated-tasks-with-cron-jobs.md`, an answering page that was missing from its labels and was found during the Step 6.9 vector-search check. Details in NOTES.md. |
