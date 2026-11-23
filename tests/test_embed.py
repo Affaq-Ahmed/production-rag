@@ -237,8 +237,9 @@ def test_embed_pending_writes_and_resumes(conn: psycopg.Connection[Any]) -> None
     ).fetchone()
     assert row is not None
     conn.execute(
-        "insert into chunks (document_id, strategy, ord, heading_path, text, token_count) "
-        "select %s, 'fixed', g, 'T', 'text ' || g, 2 from generate_series(0, 2) g",
+        "insert into chunks (document_id, strategy, ord, heading_path, text, token_count, "
+        "source_hash) "
+        "select %s, 'fixed', g, 'T', 'text ' || g, 2, 'h' from generate_series(0, 2) g",
         (row[0],),
     )
     client = FakeClient()
